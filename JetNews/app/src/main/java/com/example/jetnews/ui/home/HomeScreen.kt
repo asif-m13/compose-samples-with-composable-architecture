@@ -309,7 +309,19 @@ private fun PostList(
             applyTop = false
         )
     ) {
-        item { PostListTopSection(postTop, navigateToArticle) }
+        val topSectionStore = Store.of(
+            state = PostListTopSectionState(
+                post = postTop
+            ),
+            reducer = PostListTopSectionReducer,
+            environment = PostListTopSectionEnvironment(
+                navigateToArticle = {id -> flow{
+                    navigateToArticle(id)
+                    emit(Unit)
+                }}
+            )
+        )
+        item { PostListTopSection(topSectionStore) }
         item { PostListSimpleSection(postsSimple, navigateToArticle, favorites, onToggleFavorite) }
         item { PostListPopularSection(postsPopular, navigateToArticle) }
         item { PostListHistorySection(postsHistory, navigateToArticle) }
@@ -337,17 +349,49 @@ private fun FullScreenLoading() {
  * @param navigateToArticle (event) request navigation to Article screen
  */
 @Composable
-private fun PostListTopSection(post: Post, navigateToArticle: (String) -> Unit) {
-    Text(
-        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
-        text = stringResource(id = R.string.home_top_section_title),
-        style = MaterialTheme.typography.subtitle1
-    )
-    PostCardTop(
-        post = post,
-        modifier = Modifier.clickable(onClick = { navigateToArticle(post.id) })
-    )
-    PostListDivider()
+private fun PostListTopSection(store:Store<PostListTopSectionState, PostListTopSectionAction>) {
+    StoreView(store) { state ->
+        Text(
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp),
+            text = stringResource(id = R.string.home_top_section_title),
+            style = MaterialTheme.typography.subtitle1
+        )
+        PostCardTop(
+            post = state.post,
+            modifier = Modifier.clickable(onClick = { sendToStore(PostListTopSectionAction.Clicked(state.post.id))() })
+        )
+        PostListDivider()
+    }
+}
+
+data class PostListTopSectionState(val post:Post)
+
+sealed class PostListTopSectionAction{
+    data class Clicked(val id: String):PostListTopSectionAction()
+    object None:PostListTopSectionAction()
+}
+
+class PostListTopSectionEnvironment(
+    val navigateToArticle: (String) -> Flow<Unit>
+)
+
+
+val PostListTopSectionReducer:Reducer<PostListTopSectionState, PostListTopSectionAction, PostListTopSectionEnvironment> = {
+    state, action, env, _ ->
+    when(action){
+        is PostListTopSectionAction.Clicked -> Pair(
+            state,
+            env
+                .navigateToArticle(action.id)
+                .flowOn(Dispatchers.Main)
+                .map { PostListTopSectionAction.None }
+        )
+
+        PostListTopSectionAction.None -> Pair(
+            state,
+            emptyFlow()
+        )
+    }
 }
 
 /**
