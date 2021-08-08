@@ -38,12 +38,7 @@ import androidx.compose.material.SnackbarResult
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.rememberScaffoldState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -56,6 +51,9 @@ import com.example.jetnews.R
 import com.example.jetnews.data.Result
 import com.example.jetnews.data.posts.PostsRepository
 import com.example.jetnews.data.posts.impl.BlockingFakePostsRepository
+import com.example.jetnews.framework.Reducer
+import com.example.jetnews.framework.Store
+import com.example.jetnews.framework.StoreView
 import com.example.jetnews.model.Post
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.state.UiState
@@ -66,6 +64,8 @@ import com.google.accompanist.insets.LocalWindowInsets
 import com.google.accompanist.insets.rememberInsetsPaddingValues
 import com.google.accompanist.swiperefresh.SwipeRefresh
 import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -139,66 +139,83 @@ fun HomeScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    if (posts.hasError) {
-        val errorMessage = stringResource(id = R.string.load_error)
-        val retryMessage = stringResource(id = R.string.retry)
-
-        // If onRefreshPosts or onErrorDismiss change while the LaunchedEffect is running,
-        // don't restart the effect and use the latest lambda values.
-        val onRefreshPostsState by rememberUpdatedState(onRefreshPosts)
-        val onErrorDismissState by rememberUpdatedState(onErrorDismiss)
-
-        // Show snackbar using a coroutine, when the coroutine is cancelled the snackbar will
-        // automatically dismiss. This coroutine will cancel whenever posts.hasError is false
-        // (thanks to the surrounding if statement) or if scaffoldState.snackbarHostState changes.
-        LaunchedEffect(scaffoldState.snackbarHostState) {
-            val snackbarResult = scaffoldState.snackbarHostState.showSnackbar(
-                message = errorMessage,
-                actionLabel = retryMessage
-            )
-            when (snackbarResult) {
-                SnackbarResult.ActionPerformed -> onRefreshPostsState()
-                SnackbarResult.Dismissed -> onErrorDismissState()
-            }
-        }
-    }
-
-    Scaffold(
-        scaffoldState = scaffoldState,
-        topBar = {
-            val title = stringResource(id = R.string.app_name)
-            InsetAwareTopAppBar(
-                title = { Text(text = title) },
-                navigationIcon = {
-                    IconButton(onClick = { coroutineScope.launch { openDrawer() } }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_jetnews_logo),
-                            contentDescription = stringResource(R.string.cd_open_navigation_drawer)
-                        )
+    val store = remember {
+        Store.of(
+            state = HomeScreenState(openDrawer = false),
+            reducer = HomeScreenReducer,
+            environment = HomeScreenEnvironment(
+                openDrawer = {
+                    flow {
+                        openDrawer()
+                        emit(Unit)
                     }
                 }
             )
+        )
+    }
+
+    StoreView(store = store) { state ->
+        if (posts.hasError) {
+            val errorMessage = stringResource(id = R.string.load_error)
+            val retryMessage = stringResource(id = R.string.retry)
+
+            // If onRefreshPosts or onErrorDismiss change while the LaunchedEffect is running,
+            // don't restart the effect and use the latest lambda values.
+            val onRefreshPostsState by rememberUpdatedState(onRefreshPosts)
+            val onErrorDismissState by rememberUpdatedState(onErrorDismiss)
+
+            // Show snackbar using a coroutine, when the coroutine is cancelled the snackbar will
+            // automatically dismiss. This coroutine will cancel whenever posts.hasError is false
+            // (thanks to the surrounding if statement) or if scaffoldState.snackbarHostState changes.
+            LaunchedEffect(scaffoldState.snackbarHostState) {
+                val snackbarResult = scaffoldState.snackbarHostState.showSnackbar(
+                    message = errorMessage,
+                    actionLabel = retryMessage
+                )
+                when (snackbarResult) {
+                    SnackbarResult.ActionPerformed -> onRefreshPostsState()
+                    SnackbarResult.Dismissed -> onErrorDismissState()
+                }
+            }
         }
-    ) { innerPadding ->
-        val modifier = Modifier.padding(innerPadding)
-        LoadingContent(
-            empty = posts.initialLoad,
-            emptyContent = { FullScreenLoading() },
-            loading = posts.loading,
-            onRefresh = onRefreshPosts,
-            content = {
-                HomeScreenErrorAndContent(
-                    posts = posts,
-                    onRefresh = {
-                        onRefreshPosts()
-                    },
-                    navigateToArticle = navigateToArticle,
-                    favorites = favorites,
-                    onToggleFavorite = onToggleFavorite,
-                    modifier = modifier.supportWideScreen()
+
+        Scaffold(
+            scaffoldState = scaffoldState,
+            topBar = {
+                val title = stringResource(id = R.string.app_name)
+                InsetAwareTopAppBar(
+                    title = { Text(text = title) },
+                    navigationIcon = {
+                        IconButton(onClick = sendToStore(HomeScreenAction.OpenDrawer)) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_jetnews_logo),
+                                contentDescription = stringResource(R.string.cd_open_navigation_drawer)
+                            )
+                        }
+                    }
                 )
             }
-        )
+        ) { innerPadding ->
+            val modifier = Modifier.padding(innerPadding)
+            LoadingContent(
+                empty = posts.initialLoad,
+                emptyContent = { FullScreenLoading() },
+                loading = posts.loading,
+                onRefresh = onRefreshPosts,
+                content = {
+                    HomeScreenErrorAndContent(
+                        posts = posts,
+                        onRefresh = {
+                            onRefreshPosts()
+                        },
+                        navigateToArticle = navigateToArticle,
+                        favorites = favorites,
+                        onToggleFavorite = onToggleFavorite,
+                        modifier = modifier.supportWideScreen()
+                    )
+                }
+            )
+        }
     }
 }
 
@@ -442,3 +459,34 @@ fun PreviewHomeScreen() {
         )
     }
 }
+
+
+data class HomeScreenState(val openDrawer: Boolean)
+
+sealed class HomeScreenAction{
+    companion object
+    object OpenDrawer:HomeScreenAction()
+    object DrawerOpened:HomeScreenAction()
+}
+
+val HomeScreenReducer:Reducer<HomeScreenState, HomeScreenAction, HomeScreenEnvironment> = {state, action, env, scope ->
+
+    when(action){
+        HomeScreenAction.OpenDrawer -> Pair(
+            state.copy(openDrawer = true),
+            env
+                .openDrawer()
+                .flowOn(Dispatchers.Main)
+                .map { HomeScreenAction.DrawerOpened }
+        )
+
+        HomeScreenAction.DrawerOpened -> Pair(
+            state.copy(openDrawer = false),
+            emptyFlow()
+        )
+    }
+}
+
+class HomeScreenEnvironment(
+    val openDrawer:() -> Flow<Unit>
+)
