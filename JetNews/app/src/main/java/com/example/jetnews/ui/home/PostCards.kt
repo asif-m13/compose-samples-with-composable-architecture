@@ -94,7 +94,7 @@ fun PostCardSimple(
         val bookmarkAction = stringResource(if (state.isFavorite) R.string.unbookmark else R.string.bookmark)
 
 
-        val sendToggleMessage = {state.post.id}.andThen(PostCardSimpleAction::ToggleFavorite).andThen(::sendToStore).andThen { Unit }
+        val sendToggleMessage = sendToStore(PostCardSimpleAction.ToggleFavorite(state.post.id))
 
         Row(
             modifier = Modifier
