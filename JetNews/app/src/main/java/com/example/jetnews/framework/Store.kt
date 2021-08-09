@@ -121,8 +121,87 @@ fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> pull
     }
 }
 
+fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> pullBack(
+    reducer: Reducer<ViewState, ViewAction, ViewEnvironment>,
+    stateMapper: Optional<State, ViewState>,
+    actionMapper: Optional<Action, ViewAction>,
+    environmentMapper: (AppEnvironment) -> ViewEnvironment
+): Reducer<State, Action, AppEnvironment> = { state, action, environment, scope ->
+    val viewState:ViewState? = stateMapper.getOrNull(state)
+    if (viewState != null){
+        val viewAction = actionMapper.getOrNull(action)
+        if (viewAction != null){
+            val (nextViewState, nextEffects) = reducer(viewState, viewAction, environmentMapper(environment), scope)
+            Pair(
+                stateMapper.set(state, nextViewState),
+                nextEffects.map { actionMapper.set(action, it) }
+            )
+        } else {
+            Pair(
+                state,
+                emptyFlow()
+            )
+        }
+    } else {
+        Pair(
+            state,
+            emptyFlow()
+        )
+    }
+}
+
+fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> pullBackConditional(
+    condition:(Action) -> Boolean,
+    reducer: Reducer<ViewState, ViewAction, ViewEnvironment>,
+    stateMapper: Optional<State, ViewState>,
+    actionMapper: Optional<Action, ViewAction>,
+    environmentMapper: (AppEnvironment) -> ViewEnvironment
+): Reducer<State, Action, AppEnvironment> = reducer@{ state, action, environment, scope ->
+    if (!condition(action)) return@reducer state to emptyFlow()
+    val viewState:ViewState? = stateMapper.getOrNull(state)
+    if (viewState != null){
+        val viewAction = actionMapper.getOrNull(action)
+        if (viewAction != null){
+            val (nextViewState, nextEffects) = reducer(viewState, viewAction, environmentMapper(environment), scope)
+            Pair(
+                stateMapper.set(state, nextViewState),
+                nextEffects.map { actionMapper.set(action, it) }
+            )
+        } else {
+            Pair(
+                state,
+                emptyFlow()
+            )
+        }
+    } else {
+        Pair(
+            state,
+            emptyFlow()
+        )
+    }
+}
+
+fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> Reducer<ViewState, ViewAction, ViewEnvironment>.pullBackConditional(
+    condition:(Action) -> Boolean,
+    stateMapper: Optional<State, ViewState>,
+    actionMapper: Optional<Action, ViewAction>,
+    environmentMapper: (AppEnvironment) -> ViewEnvironment
+): Reducer<State, Action, AppEnvironment> = pullBackConditional(
+    condition = condition,
+    reducer = this,
+    stateMapper = stateMapper,
+    actionMapper = actionMapper,
+    environmentMapper = environmentMapper
+)
+
 fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> Reducer<ViewState, ViewAction, ViewEnvironment>.pullback(
     stateMapper: Lens<State, ViewState>,
+    actionMapper: Optional<Action, ViewAction>,
+    environmentMapper: (AppEnvironment) -> ViewEnvironment
+): Reducer<State, Action, AppEnvironment> = pullBack(reducer = this, stateMapper = stateMapper, actionMapper = actionMapper, environmentMapper = environmentMapper)
+
+fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment> Reducer<ViewState, ViewAction, ViewEnvironment>.pullbackOptional(
+    stateMapper: Optional<State, ViewState>,
     actionMapper: Optional<Action, ViewAction>,
     environmentMapper: (AppEnvironment) -> ViewEnvironment
 ): Reducer<State, Action, AppEnvironment> = pullBack(reducer = this, stateMapper = stateMapper, actionMapper = actionMapper, environmentMapper = environmentMapper)

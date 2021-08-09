@@ -37,7 +37,6 @@ import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Scaffold
 import androidx.compose.material.ScaffoldState
-import androidx.compose.material.Surface
 import androidx.compose.material.Tab
 import androidx.compose.material.TabRow
 import androidx.compose.material.Text
@@ -58,17 +57,17 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import arrow.core.andThen
+import arrow.core.none
+import arrow.core.some
+import arrow.optics.Optional
 import arrow.optics.optics
 import com.example.jetnews.R
 import com.example.jetnews.data.Result
 import com.example.jetnews.data.interests.InterestsRepository
 import com.example.jetnews.data.interests.TopicSelection
-import com.example.jetnews.data.interests.TopicsMap
 import com.example.jetnews.data.interests.impl.FakeInterestsRepository
-import com.example.jetnews.framework.Reducer
-import com.example.jetnews.framework.Store
-import com.example.jetnews.framework.StoreView
-import com.example.jetnews.framework.forEach
+import com.example.jetnews.framework.*
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.theme.JetnewsTheme
 import com.example.jetnews.utils.produceUiState
@@ -77,7 +76,6 @@ import com.google.accompanist.insets.navigationBarsPadding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.util.*
 
 enum class Sections(@StringRes val titleResId: Int) {
@@ -101,33 +99,65 @@ class TabContent(val section: Sections, val content: @Composable () -> Unit)
 
 sealed class LoadedStatus<out T>{
     data class Loaded<T>(val value:T):LoadedStatus<T>()
+    object Loading:LoadedStatus<Nothing>()
     object NotLoaded:LoadedStatus<Nothing>()
 }
 
-@optics
 data class InterestsScreenState(
     val topicListState:LoadedStatus<TopicListState>,
     val peopleListState: LoadedStatus<TabWithTopicsState>,
-    val publicationListState: LoadedStatus<TabWithTopicsState>
+    val publicationListState: LoadedStatus<TabWithTopicsState>,
+    val selectedTopics: Set<TopicSelection>,
+    val selectedPeople: Set<String>,
+    val selectedPublications:Set<String>,
+    val currentTab: Sections
 ){
-    companion object
+    companion object{
+
+        val topicListState:Optional<InterestsScreenState, TopicListState> = arrow.optics.Optional(
+            getOption = { if (it.topicListState is LoadedStatus.Loaded) it.topicListState.value.some() else none() },
+            set = {screen, state -> screen.copy(topicListState = LoadedStatus.Loaded(state))}
+        )
+
+        val peopleListState:Optional<InterestsScreenState, TabWithTopicsState> = arrow.optics.Optional(
+            getOption = { if (it.peopleListState is LoadedStatus.Loaded) it.peopleListState.value.some() else none() },
+            set = {screen, state -> screen.copy(peopleListState = LoadedStatus.Loaded(state))}
+        )
+
+        val publicationListState:Optional<InterestsScreenState, TabWithTopicsState> = arrow.optics.Optional(
+            getOption = { if (it.publicationListState is LoadedStatus.Loaded) it.publicationListState.value.some() else none() },
+            set = {screen, state -> screen.copy(publicationListState = LoadedStatus.Loaded(state))}
+        )
+    }
 }
 
 @optics
 sealed class InterestsScreenAction{
     companion object
 
-    @optics data class TopicListActions(val action:Pair<String, TopicListAction>):InterestsScreenAction(){
+    @optics data class TopicListActions(val action:TopicListAction):InterestsScreenAction(){
         companion object
     }
 
-    @optics data class PeopleListActions(val action:Pair<String, TabWithTopicsAction>):InterestsScreenAction(){
+    @optics data class PeopleListActions(val action:TabWithTopicsAction):InterestsScreenAction(){
         companion object
     }
 
-    @optics data class PublicationListActions(val action:Pair<String, TabWithTopicsAction>):InterestsScreenAction(){
+    @optics data class PublicationListActions(val action:TabWithTopicsAction):InterestsScreenAction(){
         companion object
     }
+
+    object LoadPeopleList:InterestsScreenAction()
+    object LoadTopics:InterestsScreenAction()
+    object LoadPublicationList:InterestsScreenAction()
+
+    data class TopicsLoaded(val value:Map<String, List<String>>, val selected:Set<TopicSelection>):InterestsScreenAction()
+    data class PeopleListLoaded(val value:List<String>, val selected:Set<String>):InterestsScreenAction()
+    data class PublicationListLoaded(val value: List<String>, val selected:Set<String>):InterestsScreenAction()
+    data class NavigateTo(val tab:Sections):InterestsScreenAction()
+
+    object OpenDrawer:InterestsScreenAction()
+    object None:InterestsScreenAction()
 }
 
 class InterestScreenEnvironment(
@@ -135,8 +165,139 @@ class InterestScreenEnvironment(
     val openDrawer: () -> Flow<Unit>
 )
 {
+    fun getPeople() = flow{
+        val people = interestsRepository.getPeople()
+        when(people){
+            is Result.Success -> emit(people.data)
+            is Result.Error -> throw people.exception
+        }
+    }
 
+    fun getPublication() = flow{
+        val publication = interestsRepository.getPublications()
+        when(publication){
+            is Result.Success -> emit(publication.data)
+            is Result.Error -> throw publication.exception
+        }
+    }
+
+    fun getTopics() = flow{
+        val topics = interestsRepository.getTopics()
+        when(topics){
+            is Result.Success -> emit(topics.data)
+            is Result.Error -> throw topics.exception
+        }
+    }
+
+    fun selectedTopics() = interestsRepository.observeTopicsSelected().take(1)
+
+    fun toggleTopic(data:TopicSelection) =
+        flow<Unit> {
+            interestsRepository.toggleTopicSelection(data)
+            emit(Unit)
+        }.flatMapConcat {
+            interestsRepository.observeTopicsSelected().take(1)
+        }
+
+    fun selectedPeople() = interestsRepository.observePeopleSelected().take(1)
+
+    fun togglePerson(data:String) =
+        flow<Unit> {
+            interestsRepository.togglePersonSelected(data)
+            emit(Unit)
+        }.flatMapConcat {
+            interestsRepository.observePeopleSelected().take(1)
+        }
+
+    fun selectedPublications() = interestsRepository.observePublicationSelected().take(1)
+
+    fun togglePublication(data:String) =
+        flow<Unit> {
+            interestsRepository.togglePublicationSelected(data)
+            emit(Unit)
+        }.flatMapConcat {
+            interestsRepository.observePublicationSelected().take(1)
+        }
 }
+
+val InterestScreenReducer:Reducer<InterestsScreenState, InterestsScreenAction, InterestScreenEnvironment> =
+    { state, action, env, scope ->
+
+        when(action){
+            InterestsScreenAction.LoadPeopleList -> state to env
+                .getPeople()
+                .combine(env.selectedPeople()){
+                    peopleList, selectedPeople -> Pair(peopleList, selectedPeople)
+                }
+                .flowOn(Dispatchers.IO)
+                .map { InterestsScreenAction.PeopleListLoaded(it.first, it.second) }
+
+            InterestsScreenAction.LoadTopics -> state to env
+                .getTopics()
+                .combine(env.selectedTopics()){
+                    topicList, selectedTopics -> Pair(topicList, selectedTopics)
+                }
+                .flowOn(Dispatchers.IO)
+                .map { InterestsScreenAction.TopicsLoaded(it.first, it.second) }
+
+            InterestsScreenAction.LoadPublicationList -> state to env
+                .getPublication()
+                .combine(env.selectedPublications()){
+                    publicationList, selectedPublications -> Pair(publicationList, selectedPublications)
+                }
+                .flowOn(Dispatchers.IO)
+                .map { InterestsScreenAction.PublicationListLoaded(it.first, it.second) }
+
+            is InterestsScreenAction.PublicationListLoaded ->
+                TabWithTopicsState(
+                    topics = action.value.map { topic -> topic to TopicItemState<String>(
+                        id = topic,
+                        title = topic,
+                        selected = action.selected.contains(topic)
+                    ) }.toMap()
+                ).let {
+                    InterestsScreenState.publicationListState.set(state, it) to emptyFlow()
+                }
+
+            is InterestsScreenAction.TopicsLoaded ->
+                TopicListState(
+                    sections = action.value.map { (section, topicStrings) -> section to SectionState(
+                    title = section,
+                    topics = topicStrings.map { topicName -> topicName to TopicItemState(
+                        id = TopicSelection(section, topicName),
+                        title = topicName,
+                        selected = action.selected.contains(TopicSelection(section, topicName))
+                        )
+                    }.toMap()
+                    ) }.toMap()
+                ).let {
+                    InterestsScreenState.topicListState.set(state, it) to emptyFlow()
+                }
+
+            is InterestsScreenAction.PeopleListLoaded ->
+                TabWithTopicsState(
+                    topics = action.value.map { topic -> topic to TopicItemState<String>(
+                        id = topic,
+                        title = topic,
+                        selected = action.selected.contains(topic)
+                ) }.toMap()).let {
+                    InterestsScreenState.peopleListState.set(state, it) to emptyFlow()
+                }
+
+            is InterestsScreenAction.NavigateTo ->
+                state.copy(currentTab = action.tab) to emptyFlow()
+
+            InterestsScreenAction.OpenDrawer -> state to
+                env
+                    .openDrawer()
+                    .flowOn(Dispatchers.Main)
+                    .map { InterestsScreenAction.None }
+
+            InterestsScreenAction.None -> state to emptyFlow()
+
+            else -> state to emptyFlow()
+        }
+    }
 
 
 
@@ -159,127 +320,87 @@ fun InterestsScreen(
 
     // Describe the screen sections here since each section needs 2 states and 1 event.
     // Pass them to the stateless InterestsScreen using a tabContent.
-    val topicsSection = TabContent(Sections.Topics) {
-        val (topics) = produceUiState(interestsRepository) {
-            getTopics()
-        }
-        // collectAsState will read a [Flow] in Compose
-        val selectedTopics by interestsRepository.observeTopicsSelected().collectAsState(setOf())
-        val onTopicSelect: (TopicSelection) -> Unit = {
-            coroutineScope.launch { interestsRepository.toggleTopicSelection(it) }
-        }
-        val data = topics.value.data ?: return@TabContent
 
-
-        val isTopicSelected:(String, String) -> Boolean = {section, topic -> selectedTopics.contains(TopicSelection(section, topic)) }
-
-        val sectionData = data.map { (section, topicStrings) -> section to SectionState(
-            title = section,
-            topics = topicStrings.map { topicName -> topicName to TopicItemState(
-                id = TopicSelection(section, topicName),
-                title = topicName,
-                selected = isTopicSelected(section, topicName)
-            ) }.toMap()
-        ) }.toMap()
-
-        val topicListState = TopicListState(sections = sectionData)
-
-
-        val store = Store.of(
-            state = topicListState,
-            reducer = TopicListReducer,
-            environment = TopicListEnvironment(
-                onTopicSelect = { topicSelection ->
-                    flow {
-                        onTopicSelect(topicSelection)
-                        emit(Unit)
-                    }
-                }
-            )
-        )
-
-
-        TopicList(store)
-    }
-
-    val peopleSection = TabContent(Sections.People) {
-        val (people) = produceUiState(interestsRepository) {
-            getPeople()
-        }
-        val selectedPeople by interestsRepository.observePeopleSelected().collectAsState(setOf())
-        val onPeopleSelect: (String) -> Unit = {
-            coroutineScope.launch { interestsRepository.togglePersonSelected(it) }
-        }
-        val data = people.value.data ?: return@TabContent
-
-        val state = TabWithTopicsState(
-            topics = data.map { topic -> topic to TopicItemState<String>(
-                id = topic,
-                title = topic,
-                selected = selectedPeople.contains(topic)
-            ) }.toMap()
-        )
-
-        val store = Store.of(
-            state = state,
-            reducer = TabWithTopicsReducer,
-            environment = TabWithTopicsEnvironment(
-                onTopicSelect = { id ->
-                    flow {
-                        onPeopleSelect(id)
-                        emit(Unit)
-                    }
-                }
-            )
-        )
-
-        TabWithTopics(store)
-    }
-
-    val publicationSection = TabContent(Sections.Publications) {
-        val (publications) = produceUiState(interestsRepository) {
-            getPublications()
-        }
-        val selectedPublications by interestsRepository.observePublicationSelected()
-            .collectAsState(setOf())
-        val onPublicationSelect: (String) -> Unit = {
-            coroutineScope.launch { interestsRepository.togglePublicationSelected(it) }
-        }
-        val data = publications.value.data ?: return@TabContent
-
-
-        val state = TabWithTopicsState(
-            topics = data.map { topic -> topic to TopicItemState<String>(
-                id = topic,
-                title = topic,
-                selected = selectedPublications.contains(topic)
-            ) }.toMap()
-        )
-
-        val store = Store.of(
-            state = state,
-            reducer = TabWithTopicsReducer,
-            environment = TabWithTopicsEnvironment(
-                onTopicSelect = { id ->
-                    flow {
-                        onPublicationSelect(id)
-                        emit(Unit)
-                    }
-                }
-            )
-        )
-        TabWithTopics(store)
-    }
-
-    val tabContent = listOf(topicsSection, peopleSection, publicationSection)
-    val (currentSection, updateSection) = rememberSaveable { mutableStateOf(tabContent.first().section) }
-    InterestsScreen(
-        tabContent = tabContent,
-        tab = currentSection,
-        onTabChange = updateSection,
-        openDrawer = openDrawer,
-        scaffoldState = scaffoldState
+    val store = Store.of(
+        state = InterestsScreenState(
+            topicListState = LoadedStatus.NotLoaded,
+            peopleListState = LoadedStatus.NotLoaded,
+            publicationListState = LoadedStatus.NotLoaded,
+            selectedTopics = emptySet(),
+            selectedPeople = emptySet(),
+            selectedPublications = emptySet(),
+            currentTab = Sections.Topics
+        ),
+        reducer = ComposedInterestScreenReducer,
+        environment = InterestScreenEnvironment(interestsRepository, { flowOf(Unit).map { openDrawer() }.map { Unit } })
     )
+
+    StoreView(store) { state ->
+
+        val topicsSection = TabContent(Sections.Topics) topicContent@{
+
+            if (state.topicListState is LoadedStatus.NotLoaded){
+                sendToStore(InterestsScreenAction.LoadTopics)()
+                return@topicContent
+            }
+
+            if (state.topicListState !is LoadedStatus.Loaded) return@topicContent
+
+            val topicStore = store.forView<TopicListState, TopicListAction>(
+                appState = state,
+                stateBuilder = { state.topicListState.value },
+                actionMapper = { action -> InterestsScreenAction.TopicListActions(action)}
+            )
+
+            TopicList(topicStore)
+        }
+
+        val peopleSection = TabContent(Sections.People) peopleSection@{
+
+            if (state.peopleListState is LoadedStatus.NotLoaded){
+                sendToStore(InterestsScreenAction.LoadPeopleList)()
+                return@peopleSection
+            }
+
+            if (state.peopleListState !is LoadedStatus.Loaded) return@peopleSection
+
+            val peopleStore = store.forView<TabWithTopicsState, TabWithTopicsAction>(
+                appState = state,
+                stateBuilder = { state.peopleListState.value },
+                actionMapper = { action -> InterestsScreenAction.PeopleListActions(action) }
+            )
+
+            TabWithTopics(peopleStore)
+        }
+
+        val publicationSection = TabContent(Sections.Publications) publicationSection@{
+
+            if (state.publicationListState is LoadedStatus.NotLoaded){
+                sendToStore(InterestsScreenAction.LoadPublicationList)()
+                return@publicationSection
+            }
+
+            if (state.publicationListState !is LoadedStatus.Loaded) return@publicationSection
+
+            val publicationStore = store.forView<TabWithTopicsState, TabWithTopicsAction>(
+                appState = state,
+                stateBuilder = { state.publicationListState.value },
+                actionMapper = { action -> InterestsScreenAction.PublicationListActions(action) }
+            )
+
+            TabWithTopics(publicationStore)
+        }
+
+        val tabContent = listOf(topicsSection, peopleSection, publicationSection)
+        InterestsScreen(
+            tabContent = tabContent,
+            tab = state.currentTab,
+            onTabChange = { section -> sendToStore(InterestsScreenAction.NavigateTo(section))() },
+            openDrawer = sendToStore(InterestsScreenAction.OpenDrawer),
+            scaffoldState = scaffoldState
+        )
+    }
+
 }
 
 /**
@@ -455,14 +576,15 @@ sealed class TopicListAction{
 }
 
 class TopicListEnvironment(
-    val onTopicSelect: (TopicSelection) -> Flow<Unit>
+    val onTopicSelect: (TopicSelection) -> Flow<Set<TopicSelection>>
 )
 
 fun <TopicId> TopicItemReducer():Reducer<TopicItemState<TopicId>, TopicItemAction<TopicId>, TopicItemEnvironment<TopicId>> = {
         state, action, environment, scope ->
     when(action){
         TopicItemAction.None -> state to emptyFlow()
-        is TopicItemAction.Toggle -> state to environment.onToggle(state.id).map { TopicItemAction.None }
+        is TopicItemAction.Toggle -> state to environment.onToggle(state.id).map { TopicItemAction.UpdatedSelections(it) }
+        is TopicItemAction.UpdatedSelections -> state.copy(selected = action.selected.contains(state.id)) to emptyFlow()
     }
 }
 
@@ -548,11 +670,11 @@ sealed class TabWithTopicsAction{
     }
 }
 
-class TabWithTopicsEnvironment(
-    val onTopicSelect: (String) -> Flow<Unit>
+class TabWithTopicsEnvironment<TopicId>(
+    val onTopicSelect: (TopicId) -> Flow<Set<TopicId>>
 )
 
-val TabWithTopicsReducer:Reducer<TabWithTopicsState, TabWithTopicsAction, TabWithTopicsEnvironment> =
+val TabWithTopicsReducer:Reducer<TabWithTopicsState, TabWithTopicsAction, TabWithTopicsEnvironment<String>> =
     TopicItemReducer<String>().forEach(
         states = TabWithTopicsState.topics,
         actionMapper = TabWithTopicsAction.topicItemActions.action,
@@ -612,11 +734,12 @@ data class TopicItemState<TopicId>(
 )
 
 class TopicItemEnvironment<TopicId>(
-    val onToggle:(TopicId) -> Flow<Unit>
+    val onToggle:(TopicId) -> Flow<Set<TopicId>>
 )
 
 sealed class TopicItemAction<out TopicId>{
     data class Toggle<TopicId>(val title:TopicId):TopicItemAction<TopicId>()
+    data class UpdatedSelections<TopicId>(val selected:Set<TopicId>):TopicItemAction<TopicId>()
     object None:TopicItemAction<Nothing>()
 }
 
@@ -731,3 +854,39 @@ fun PreviewInterestsScreen() {
 //        }
 //    }
 //}
+
+val ComposedInterestScreenReducer:Reducer<InterestsScreenState, InterestsScreenAction, InterestScreenEnvironment> =
+    com.example.jetnews.framework.combine(
+        TopicListReducer.pullbackOptional(
+            stateMapper = InterestsScreenState.topicListState,
+            environmentMapper = { env ->
+                TopicListEnvironment(
+                    onTopicSelect = { id -> env.toggleTopic(id) }
+                )
+            },
+            actionMapper = InterestsScreenAction.topicListActions.action
+        ),
+        TabWithTopicsReducer.pullBackConditional(
+            condition = { it is InterestsScreenAction.PeopleListActions },
+            stateMapper = InterestsScreenState.peopleListState,
+            actionMapper = InterestsScreenAction.peopleListActions.action,
+            environmentMapper = { env ->
+                TabWithTopicsEnvironment<String>(
+                    onTopicSelect = env::togglePerson
+                )
+            }
+        ),
+        TabWithTopicsReducer.pullBackConditional(
+            condition = { it is InterestsScreenAction.PublicationListActions },
+            stateMapper = InterestsScreenState.publicationListState,
+            actionMapper = InterestsScreenAction.publicationListActions.action,
+            environmentMapper = { env ->
+                TabWithTopicsEnvironment<String>(
+                    onTopicSelect = env::togglePublication
+                )
+            }
+        ),
+        InterestScreenReducer
+    )
+
+
