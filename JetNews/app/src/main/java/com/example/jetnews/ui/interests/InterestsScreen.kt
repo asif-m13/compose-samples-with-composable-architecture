@@ -477,6 +477,34 @@ private fun PublicationList(
     TabWithTopics(publications, selectedPublications, onPublicationSelect)
 }
 
+@optics
+data class TabWithTopicsState(
+    val topics: Map<String, TopicItemState<String>>
+){
+    companion object
+}
+
+@optics
+sealed class TabWithTopicsAction{
+    companion object
+    @optics data class TopicItemActions(val action:Pair<String, TopicItemAction<String>>):TabWithTopicsAction(){
+        companion object
+    }
+}
+
+class TabWithTopicsEnvironment(
+    val onTopicSelect: (String) -> Flow<Unit>
+)
+
+val TabWithTopicsReducer:Reducer<TabWithTopicsState, TabWithTopicsAction, TabWithTopicsEnvironment> =
+    TopicItemReducer<String>().forEach(
+        states = TabWithTopicsState.topics,
+        actionMapper = TabWithTopicsAction.topicItemActions.action,
+        environmentMapper = {env -> TopicItemEnvironment(
+            onToggle = env.onTopicSelect
+        )}
+    )
+
 /**
  * Display a simple list of topics
  *
@@ -490,32 +518,50 @@ private fun TabWithTopics(
     selectedTopics: Set<String>,
     onTopicSelect: (String) -> Unit
 ) {
-    LazyColumn(
-        modifier = Modifier
-            .padding(top = 16.dp)
-            .navigationBarsPadding()
-    ) {
-        items(topics) { topic ->
-            val store = Store.of(
-                state = TopicItemState<String>(
-                    id = topic,
-                    title = topic,
-                    selected = selectedTopics.contains(topic),
-                ),
-                reducer = TopicItemReducer<String>(),
-                environment = TopicItemEnvironment(
-                    onToggle = { title ->
-                        flow {
-                            onTopicSelect(topic)
-                            emit(Unit)
-                        }
-                    }
+
+    val state = TabWithTopicsState(
+        topics = topics.map { topic -> topic to TopicItemState<String>(
+            id = topic,
+            title = topic,
+            selected = selectedTopics.contains(topic)
+        ) }.toMap()
+    )
+
+    val store = Store.of(
+        state = state,
+        reducer = TabWithTopicsReducer,
+        environment = TabWithTopicsEnvironment(
+            onTopicSelect = { id ->
+                flow {
+                    onTopicSelect(id)
+                    emit(Unit)
+                }
+            }
+        )
+    )
+
+    StoreView(store) { state ->
+        LazyColumn(
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .navigationBarsPadding()
+        ) {
+
+            items(items = state.topics.values.toList(),key = {it.id}) { topic ->
+
+                val store = store.forView<TopicItemState<String>, TopicItemAction<String>>(
+                    appState = state,
+                    stateBuilder = { topic },
+                    actionMapper = { action -> TabWithTopicsAction.TopicItemActions(topic.title to action) }
                 )
-            )
-            TopicItem<String>(store)
-            TopicDivider()
+                TopicItem<String>(store)
+                TopicDivider()
+            }
         }
     }
+
+
+
 }
 
 @optics
