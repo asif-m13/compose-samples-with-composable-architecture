@@ -98,6 +98,48 @@ enum class Sections(@StringRes val titleResId: Int) {
  */
 class TabContent(val section: Sections, val content: @Composable () -> Unit)
 
+
+sealed class LoadedStatus<out T>{
+    data class Loaded<T>(val value:T):LoadedStatus<T>()
+    object NotLoaded:LoadedStatus<Nothing>()
+}
+
+@optics
+data class InterestsScreenState(
+    val topicListState:LoadedStatus<TopicListState>,
+    val peopleListState: LoadedStatus<TabWithTopicsState>,
+    val publicationListState: LoadedStatus<TabWithTopicsState>
+){
+    companion object
+}
+
+@optics
+sealed class InterestsScreenAction{
+    companion object
+
+    @optics data class TopicListActions(val action:Pair<String, TopicListAction>):InterestsScreenAction(){
+        companion object
+    }
+
+    @optics data class PeopleListActions(val action:Pair<String, TabWithTopicsAction>):InterestsScreenAction(){
+        companion object
+    }
+
+    @optics data class PublicationListActions(val action:Pair<String, TabWithTopicsAction>):InterestsScreenAction(){
+        companion object
+    }
+}
+
+class InterestScreenEnvironment(
+    val interestsRepository: InterestsRepository,
+    val openDrawer: () -> Flow<Unit>
+)
+{
+
+}
+
+
+
 /**
  * Stateful InterestsScreen manages state using [produceUiState]
  *
@@ -127,7 +169,37 @@ fun InterestsScreen(
             coroutineScope.launch { interestsRepository.toggleTopicSelection(it) }
         }
         val data = topics.value.data ?: return@TabContent
-        TopicList(data, selectedTopics, onTopicSelect)
+
+
+        val isTopicSelected:(String, String) -> Boolean = {section, topic -> selectedTopics.contains(TopicSelection(section, topic)) }
+
+        val sectionData = data.map { (section, topicStrings) -> section to SectionState(
+            title = section,
+            topics = topicStrings.map { topicName -> topicName to TopicItemState(
+                id = TopicSelection(section, topicName),
+                title = topicName,
+                selected = isTopicSelected(section, topicName)
+            ) }.toMap()
+        ) }.toMap()
+
+        val topicListState = TopicListState(sections = sectionData)
+
+
+        val store = Store.of(
+            state = topicListState,
+            reducer = TopicListReducer,
+            environment = TopicListEnvironment(
+                onTopicSelect = { topicSelection ->
+                    flow {
+                        onTopicSelect(topicSelection)
+                        emit(Unit)
+                    }
+                }
+            )
+        )
+
+
+        TopicList(store)
     }
 
     val peopleSection = TabContent(Sections.People) {
@@ -139,7 +211,29 @@ fun InterestsScreen(
             coroutineScope.launch { interestsRepository.togglePersonSelected(it) }
         }
         val data = people.value.data ?: return@TabContent
-        PeopleList(data, selectedPeople, onPeopleSelect)
+
+        val state = TabWithTopicsState(
+            topics = data.map { topic -> topic to TopicItemState<String>(
+                id = topic,
+                title = topic,
+                selected = selectedPeople.contains(topic)
+            ) }.toMap()
+        )
+
+        val store = Store.of(
+            state = state,
+            reducer = TabWithTopicsReducer,
+            environment = TabWithTopicsEnvironment(
+                onTopicSelect = { id ->
+                    flow {
+                        onPeopleSelect(id)
+                        emit(Unit)
+                    }
+                }
+            )
+        )
+
+        TabWithTopics(store)
     }
 
     val publicationSection = TabContent(Sections.Publications) {
@@ -152,7 +246,29 @@ fun InterestsScreen(
             coroutineScope.launch { interestsRepository.togglePublicationSelected(it) }
         }
         val data = publications.value.data ?: return@TabContent
-        PublicationList(data, selectedPublications, onPublicationSelect)
+
+
+        val state = TabWithTopicsState(
+            topics = data.map { topic -> topic to TopicItemState<String>(
+                id = topic,
+                title = topic,
+                selected = selectedPublications.contains(topic)
+            ) }.toMap()
+        )
+
+        val store = Store.of(
+            state = state,
+            reducer = TabWithTopicsReducer,
+            environment = TabWithTopicsEnvironment(
+                onTopicSelect = { id ->
+                    flow {
+                        onPublicationSelect(id)
+                        emit(Unit)
+                    }
+                }
+            )
+        )
+        TabWithTopics(store)
     }
 
     val tabContent = listOf(topicsSection, peopleSection, publicationSection)
@@ -375,38 +491,8 @@ val TopicListReducer:Reducer<TopicListState, TopicListAction, TopicListEnvironme
  */
 @Composable
 private fun TopicList(
-    topics: TopicsMap,
-    selectedTopics: Set<TopicSelection>,
-    onTopicSelect: (TopicSelection) -> Unit
+    store:Store<TopicListState, TopicListAction>
 ) {
-
-    val isTopicSelected:(String, String) -> Boolean = {section, topic -> selectedTopics.contains(TopicSelection(section, topic)) }
-
-    val sectionData = topics.map { (section, topicStrings) -> section to SectionState(
-        title = section,
-        topics = topicStrings.map { topicName -> topicName to TopicItemState(
-            id = TopicSelection(section, topicName),
-            title = topicName,
-            selected = isTopicSelected(section, topicName)
-        ) }.toMap()
-    ) }.toMap()
-
-    val topicListState = TopicListState(sections = sectionData)
-
-
-    val store = Store.of(
-        state = topicListState,
-        reducer = TopicListReducer,
-        environment = TopicListEnvironment(
-            onTopicSelect = { topicSelection ->
-                flow {
-                    onTopicSelect(topicSelection)
-                    emit(Unit)
-                }
-            }
-        )
-    )
-
     StoreView(store) { state ->
         LazyColumn(Modifier.navigationBarsPadding()) {
 
@@ -445,37 +531,7 @@ private fun TopicList(
 
 }
 
-/**
- * Display the list for people tab
- *
- * @param people (state) people to display
- * @param selectedPeople (state) currently selected people
- * @param onPersonSelect (event) request a person selection be changed
- */
-@Composable
-private fun PeopleList(
-    people: List<String>,
-    selectedPeople: Set<String>,
-    onPersonSelect: (String) -> Unit
-) {
-    TabWithTopics(people, selectedPeople, onPersonSelect)
-}
 
-/**
- * Display a list for publications tab
- *
- * @param publications (state) publications to display
- * @param selectedPublications (state) currently selected publications
- * @param onPublicationSelect (event) request a publication selection be changed
- */
-@Composable
-private fun PublicationList(
-    publications: List<String>,
-    selectedPublications: Set<String>,
-    onPublicationSelect: (String) -> Unit
-) {
-    TabWithTopics(publications, selectedPublications, onPublicationSelect)
-}
 
 @optics
 data class TabWithTopicsState(
@@ -514,32 +570,8 @@ val TabWithTopicsReducer:Reducer<TabWithTopicsState, TabWithTopicsAction, TabWit
  */
 @Composable
 private fun TabWithTopics(
-    topics: List<String>,
-    selectedTopics: Set<String>,
-    onTopicSelect: (String) -> Unit
+    store: Store<TabWithTopicsState, TabWithTopicsAction>
 ) {
-
-    val state = TabWithTopicsState(
-        topics = topics.map { topic -> topic to TopicItemState<String>(
-            id = topic,
-            title = topic,
-            selected = selectedTopics.contains(topic)
-        ) }.toMap()
-    )
-
-    val store = Store.of(
-        state = state,
-        reducer = TabWithTopicsReducer,
-        environment = TabWithTopicsEnvironment(
-            onTopicSelect = { id ->
-                flow {
-                    onTopicSelect(id)
-                    emit(Unit)
-                }
-            }
-        )
-    )
-
     StoreView(store) { state ->
         LazyColumn(
             modifier = Modifier
@@ -658,44 +690,44 @@ fun PreviewInterestsScreen() {
     }
 }
 
-@Preview("Interests screen topics tab", "Topics")
-@Preview("Interests screen topics tab (dark)", "Topics", uiMode = UI_MODE_NIGHT_YES)
-@Composable
-fun PreviewTopicsTab() {
-    val topics = runBlocking {
-        (FakeInterestsRepository().getTopics() as Result.Success).data
-    }
-    JetnewsTheme {
-        Surface {
-            TopicList(topics, setOf(), {})
-        }
-    }
-}
-
-@Preview("Interests screen people tab", "People")
-@Preview("Interests screen people tab (dark)", "People", uiMode = UI_MODE_NIGHT_YES)
-@Composable
-fun PreviewPeopleTab() {
-    val people = runBlocking {
-        (FakeInterestsRepository().getPeople() as Result.Success).data
-    }
-    JetnewsTheme {
-        Surface {
-            PeopleList(people, setOf(), {})
-        }
-    }
-}
-
-@Preview("Interests screen publications tab", "Publications")
-@Preview("Interests screen publications tab (dark)", "Publications", uiMode = UI_MODE_NIGHT_YES)
-@Composable
-fun PreviewPublicationsTab() {
-    val publications = runBlocking {
-        (FakeInterestsRepository().getPublications() as Result.Success).data
-    }
-    JetnewsTheme {
-        Surface {
-            PublicationList(publications, setOf(), {})
-        }
-    }
-}
+//@Preview("Interests screen topics tab", "Topics")
+//@Preview("Interests screen topics tab (dark)", "Topics", uiMode = UI_MODE_NIGHT_YES)
+//@Composable
+//fun PreviewTopicsTab() {
+//    val topics = runBlocking {
+//        (FakeInterestsRepository().getTopics() as Result.Success).data
+//    }
+//    JetnewsTheme {
+//        Surface {
+//            TopicList(topics, setOf(), {})
+//        }
+//    }
+//}
+//
+//@Preview("Interests screen people tab", "People")
+//@Preview("Interests screen people tab (dark)", "People", uiMode = UI_MODE_NIGHT_YES)
+//@Composable
+//fun PreviewPeopleTab() {
+//    val people = runBlocking {
+//        (FakeInterestsRepository().getPeople() as Result.Success).data
+//    }
+//    JetnewsTheme {
+//        Surface {
+//            PeopleList(people, setOf(), {})
+//        }
+//    }
+//}
+//
+//@Preview("Interests screen publications tab", "Publications")
+//@Preview("Interests screen publications tab (dark)", "Publications", uiMode = UI_MODE_NIGHT_YES)
+//@Composable
+//fun PreviewPublicationsTab() {
+//    val publications = runBlocking {
+//        (FakeInterestsRepository().getPublications() as Result.Success).data
+//    }
+//    JetnewsTheme {
+//        Surface {
+//            PublicationList(publications, setOf(), {})
+//        }
+//    }
+//}
