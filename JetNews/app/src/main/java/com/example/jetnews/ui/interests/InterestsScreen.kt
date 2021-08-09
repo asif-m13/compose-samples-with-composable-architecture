@@ -306,7 +306,7 @@ private fun TabContent(
 @optics
 data class SectionState(
     val title:String,
-    val topics:Map<String, TopicItemState>
+    val topics:Map<String, TopicItemState<TopicSelection>>
 ){
     companion object
 }
@@ -321,7 +321,7 @@ data class TopicListState(
 @optics
 sealed class SectionItemAction{
     companion object
-    @optics data class TopicItemActions(val action:Pair<String, TopicItemAction>):SectionItemAction(){
+    @optics data class TopicItemActions(val action:Pair<String, TopicItemAction<TopicSelection>>):SectionItemAction(){
         companion object
     }
 
@@ -342,37 +342,22 @@ class TopicListEnvironment(
     val onTopicSelect: (TopicSelection) -> Flow<Unit>
 )
 
-val TopicItemReducer:Reducer<TopicItemState, TopicItemAction, TopicItemEnvironment> = {
+fun <TopicId> TopicItemReducer():Reducer<TopicItemState<TopicId>, TopicItemAction<TopicId>, TopicItemEnvironment<TopicId>> = {
         state, action, environment, scope ->
     when(action){
         TopicItemAction.None -> state to emptyFlow()
-        is TopicItemAction.Toggle -> state to environment.onToggle(state.title).map { TopicItemAction.None }
+        is TopicItemAction.Toggle -> state to environment.onToggle(state.id).map { TopicItemAction.None }
     }
 }
 
 val SectionItemReducer:Reducer<SectionState, SectionItemAction, TopicListEnvironment> =
-    com.example.jetnews.framework.combine(
-        TopicItemReducer.forEach(
+        TopicItemReducer<TopicSelection>().forEach(
             states = SectionState.topics,
             actionMapper = SectionItemAction.topicItemActions.action,
-            environmentMapper =  { env -> TopicItemEnvironment(
-                onToggle = { flowOf(Unit) }
+            environmentMapper =  { env -> TopicItemEnvironment<TopicSelection>(
+                onToggle = env.onTopicSelect
             ) }
-        ),
-        {
-            state, action, env, scope ->
-            when(action){
-                is SectionItemAction.TopicItemActions -> when(action.action.second){
-                    is TopicItemAction.Toggle -> state to env
-                        .onTopicSelect(TopicSelection(section = state.title, topic = action.action.first))
-                        .map { SectionItemAction.None }
-                    else -> state to emptyFlow()
-                }
-                SectionItemAction.None -> state to emptyFlow()
-            }
-
-        }
-    )
+        )
 
 val TopicListReducer:Reducer<TopicListState, TopicListAction, TopicListEnvironment> = SectionItemReducer.forEach(
     states = TopicListState.sections,
@@ -400,6 +385,7 @@ private fun TopicList(
     val sectionData = topics.map { (section, topicStrings) -> section to SectionState(
         title = section,
         topics = topicStrings.map { topicName -> topicName to TopicItemState(
+            id = TopicSelection(section, topicName),
             title = topicName,
             selected = isTopicSelected(section, topicName)
         ) }.toMap()
@@ -440,7 +426,7 @@ private fun TopicList(
                             style = MaterialTheme.typography.subtitle1
                         )
                         Column {
-                            childStore.forStates<TopicItemState, TopicItemAction, String>(
+                            childStore.forStates<TopicItemState<TopicSelection>, TopicItemAction<TopicSelection>, String>(
                                 appState = childState,
                                 states = { it.topics },
                                 actionMapper = {id, action -> SectionItemAction.TopicItemActions(id to action)}
@@ -511,11 +497,12 @@ private fun TabWithTopics(
     ) {
         items(topics) { topic ->
             val store = Store.of(
-                state = TopicItemState(
+                state = TopicItemState<String>(
+                    id = topic,
                     title = topic,
                     selected = selectedTopics.contains(topic),
                 ),
-                reducer = TopicItemReducer,
+                reducer = TopicItemReducer<String>(),
                 environment = TopicItemEnvironment(
                     onToggle = { title ->
                         flow {
@@ -525,7 +512,7 @@ private fun TabWithTopics(
                     }
                 )
             )
-            TopicItem(store)
+            TopicItem<String>(store)
             TopicDivider()
         }
     }
@@ -534,24 +521,25 @@ private fun TabWithTopics(
 @optics
 data class SectionTopicState(
     val section:String,
-    val topics: Map<String, TopicItemState>
+    val topics: Map<String, TopicItemState<TopicSelection>>
 ){
     companion object
 }
 
 
-data class TopicItemState(
+data class TopicItemState<TopicId>(
+    val id: TopicId,
     val title:String,
     val selected:Boolean
 )
 
-class TopicItemEnvironment(
-    val onToggle:(String) -> Flow<Unit>
+class TopicItemEnvironment<TopicId>(
+    val onToggle:(TopicId) -> Flow<Unit>
 )
 
-sealed class TopicItemAction{
-    data class Toggle(val title:String):TopicItemAction()
-    object None:TopicItemAction()
+sealed class TopicItemAction<out TopicId>{
+    data class Toggle<TopicId>(val title:TopicId):TopicItemAction<TopicId>()
+    object None:TopicItemAction<Nothing>()
 }
 
 
@@ -564,14 +552,14 @@ sealed class TopicItemAction{
  * @param onToggle (event) toggle selection for topic
  */
 @Composable
-private fun TopicItem(store:Store<TopicItemState, TopicItemAction>) {
+private fun <TopicId> TopicItem(store:Store<TopicItemState<TopicId>, TopicItemAction<TopicId>>) {
     StoreView(store) { state ->
         val image = painterResource(R.drawable.placeholder_1_1)
         Row(
             modifier = Modifier
                 .toggleable(
                     value = state.selected,
-                    onValueChange = { sendToStore(TopicItemAction.Toggle(state.title))() }
+                    onValueChange = { sendToStore(TopicItemAction.Toggle(state.id))() }
                 )
                 .padding(horizontal = 16.dp)
         ) {
