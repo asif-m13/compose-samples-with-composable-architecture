@@ -367,10 +367,22 @@ private fun TabWithTopics(
             .navigationBarsPadding()
     ) {
         items(topics) { topic ->
-            TopicItem(
-                topic,
-                selected = selectedTopics.contains(topic)
-            ) { onTopicSelect(topic) }
+            val store = Store.of(
+                state = TopicItemState(
+                    title = topic,
+                    selected = selectedTopics.contains(topic)
+                ),
+                reducer = TopicItemReducer,
+                environment = TopicItemEnvironment(
+                    onToggle = { title ->
+                        flow {
+                            onTopicSelect(topic)
+                            emit(Unit)
+                        }
+                    }
+                )
+            )
+            TopicItem(store)
             TopicDivider()
         }
     }
@@ -401,13 +413,44 @@ private fun TabWithSections(
                 )
             }
             items(topics) { topic ->
-                TopicItem(
-                    itemTitle = topic,
-                    selected = selectedTopics.contains(TopicSelection(section, topic))
-                ) { onTopicSelect(TopicSelection(section, topic)) }
+                val store = Store.of(
+                    state = TopicItemState(title = topic, selected = selectedTopics.contains(TopicSelection(section, topic))),
+                    reducer = TopicItemReducer,
+                    environment = TopicItemEnvironment(
+                        onToggle = { title ->
+                            flow {
+                                onTopicSelect(TopicSelection(section, title))
+                                emit(Unit)
+                            }
+                        }
+                    )
+                )
+                TopicItem(store)
                 TopicDivider()
             }
         }
+    }
+}
+
+data class TopicItemState(
+    val title:String,
+    val selected:Boolean
+)
+
+class TopicItemEnvironment(
+    val onToggle:(String) -> Flow<Unit>
+)
+
+sealed class TopicItemAction{
+    data class Toggle(val title:String):TopicItemAction()
+    object None:TopicItemAction()
+}
+
+val TopicItemReducer:Reducer<TopicItemState, TopicItemAction, TopicItemEnvironment> = {
+    state, action, environment, scope ->
+    when(action){
+        TopicItemAction.None -> state to emptyFlow()
+        is TopicItemAction.Toggle -> state to environment.onToggle(state.title).map { TopicItemAction.None }
     }
 }
 
@@ -419,36 +462,38 @@ private fun TabWithSections(
  * @param onToggle (event) toggle selection for topic
  */
 @Composable
-private fun TopicItem(itemTitle: String, selected: Boolean, onToggle: () -> Unit) {
-    val image = painterResource(R.drawable.placeholder_1_1)
-    Row(
-        modifier = Modifier
-            .toggleable(
-                value = selected,
-                onValueChange = { onToggle() }
+private fun TopicItem(store:Store<TopicItemState, TopicItemAction>) {
+    StoreView(store) { state ->
+        val image = painterResource(R.drawable.placeholder_1_1)
+        Row(
+            modifier = Modifier
+                .toggleable(
+                    value = state.selected,
+                    onValueChange = { sendToStore(TopicItemAction.Toggle(state.title))() }
+                )
+                .padding(horizontal = 16.dp)
+        ) {
+            Image(
+                painter = image,
+                contentDescription = null, // decorative
+                modifier = Modifier
+                    .align(Alignment.CenterVertically)
+                    .size(56.dp, 56.dp)
+                    .clip(RoundedCornerShape(4.dp))
             )
-            .padding(horizontal = 16.dp)
-    ) {
-        Image(
-            painter = image,
-            contentDescription = null, // decorative
-            modifier = Modifier
-                .align(Alignment.CenterVertically)
-                .size(56.dp, 56.dp)
-                .clip(RoundedCornerShape(4.dp))
-        )
-        Text(
-            text = itemTitle,
-            modifier = Modifier
-                .align(Alignment.CenterVertically)
-                .padding(16.dp),
-            style = MaterialTheme.typography.subtitle1
-        )
-        Spacer(Modifier.weight(1f))
-        SelectTopicButton(
-            modifier = Modifier.align(Alignment.CenterVertically),
-            selected = selected
-        )
+            Text(
+                text = state.title,
+                modifier = Modifier
+                    .align(Alignment.CenterVertically)
+                    .padding(16.dp),
+                style = MaterialTheme.typography.subtitle1
+            )
+            Spacer(Modifier.weight(1f))
+            SelectTopicButton(
+                modifier = Modifier.align(Alignment.CenterVertically),
+                selected = state.selected
+            )
+        }
     }
 }
 
