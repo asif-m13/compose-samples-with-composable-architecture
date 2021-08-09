@@ -527,7 +527,7 @@ private fun PostListPopularSection(
         reducer = PostListPopularSectionReducer,
         environment = PostListPopularSectionEnvironment(
             navigateToArticle = { id ->
-                flowOf(id).mapNotNull { navigateToArticle(it) }
+                flowOf(id).map { navigateToArticle(it) }
             }
         )
     )

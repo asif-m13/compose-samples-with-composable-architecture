@@ -128,7 +128,7 @@ fun <State, Action, ViewState, ViewAction, AppEnvironment, ViewEnvironment, Stat
                 stateAccess.set(state, nextState),
                 effect.map { actionMapper.set(action, id to it) }
             ) }
-        Pair(state, emptyFlow())
+            ?: Pair(state, emptyFlow())
     } else {
         Pair(state, emptyFlow())
     }

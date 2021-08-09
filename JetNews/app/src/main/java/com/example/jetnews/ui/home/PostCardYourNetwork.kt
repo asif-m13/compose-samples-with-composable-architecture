@@ -72,7 +72,7 @@ fun PostCardPopular(
 
     StoreView(store) { state ->
 
-        val navigateToArticle = { state.post.id }.andThen(PostCardPopularAction::NavigateToArticle).andThen(::sendToStore).andThen { Unit }
+        val navigateToArticle = sendToStore(PostCardPopularAction.NavigateToArticle(state.post.id))
 
         Card(
             shape = MaterialTheme.shapes.medium,

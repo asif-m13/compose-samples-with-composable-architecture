@@ -190,7 +190,7 @@ val PostCardHistoryReducer:Reducer<PostCardHistoryState, PostCardHistoryAction, 
 fun PostCardHistory(store:Store<PostCardHistoryState, PostCardHistoryAction>) {
     StoreView(store) { state ->
 
-        val navigateToArticle = { state.post.id }.andThen(PostCardHistoryAction::NavigateTo).andThen(this::sendToStore).andThen { Unit }
+        val navigateToArticle = sendToStore(PostCardHistoryAction.NavigateTo(state.post.id))
 
         Row(
             Modifier
