@@ -64,11 +64,16 @@ import com.example.jetnews.data.interests.InterestsRepository
 import com.example.jetnews.data.interests.TopicSelection
 import com.example.jetnews.data.interests.TopicsMap
 import com.example.jetnews.data.interests.impl.FakeInterestsRepository
+import com.example.jetnews.framework.Reducer
+import com.example.jetnews.framework.Store
+import com.example.jetnews.framework.StoreView
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.theme.JetnewsTheme
 import com.example.jetnews.utils.produceUiState
 import com.example.jetnews.utils.supportWideScreen
 import com.google.accompanist.insets.navigationBarsPadding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -192,7 +197,47 @@ fun InterestsScreen(
             )
         }
     ) {
-        TabContent(tab, onTabChange, tabContent)
+
+        val store = Store.of(
+            state = TabContentState(
+                tabContent = tabContent,
+                currentSection = tab
+            ),
+            reducer = TabContentReducer,
+            environment = TabContentEnvironment(
+                updateSection = { section ->
+                    flow {
+                        onTabChange(section)
+                        emit(Unit)
+                    }
+                }
+            )
+        )
+
+        TabContent(store)
+    }
+}
+
+data class TabContentState(
+    val tabContent: List<TabContent>,
+    val currentSection: Sections
+)
+
+class TabContentEnvironment(
+    val updateSection:(Sections) -> Flow<Unit>
+)
+
+sealed class TabContentAction{
+    data class UpdateSection(val section:Sections):TabContentAction()
+    object None:TabContentAction()
+}
+
+val TabContentReducer:Reducer<TabContentState, TabContentAction, TabContentEnvironment> = {
+    state,action, env, _ ->
+    when(action){
+        TabContentAction.None -> state to emptyFlow()
+        is TabContentAction.UpdateSection -> state to env.updateSection(action.section).flowOn(
+            Dispatchers.Main).map { TabContentAction.None }
     }
 }
 
@@ -206,54 +251,53 @@ fun InterestsScreen(
  */
 @Composable
 private fun TabContent(
-    currentSection: Sections,
-    updateSection: (Sections) -> Unit,
-    tabContent: List<TabContent>
+    store:Store<TabContentState, TabContentAction>
 ) {
-    val selectedTabIndex = tabContent.indexOfFirst { it.section == currentSection }
-    Column {
-        TabRow(
-            selectedTabIndex = selectedTabIndex,
-            backgroundColor = MaterialTheme.colors.onPrimary,
-            contentColor = MaterialTheme.colors.primary,
+    StoreView(store) { state ->
+        val selectedTabIndex = state.tabContent.indexOfFirst { it.section == state.currentSection }
+        Column {
+            TabRow(
+                selectedTabIndex = selectedTabIndex,
+                backgroundColor = MaterialTheme.colors.onPrimary,
+                contentColor = MaterialTheme.colors.primary,
 
-        ) {
-            tabContent.forEachIndexed { index, tabContent ->
-                val colorText = if (selectedTabIndex == index) {
-                    MaterialTheme.colors.primary
-                } else {
-                    MaterialTheme.colors.onSurface.copy(alpha = 0.8f)
-                }
-                Tab(
-                    selected = selectedTabIndex == index,
-                    onClick = {
-                        updateSection(tabContent.section)
-                    },
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    Text(
-                        text = stringResource(id = tabContent.section.titleResId),
-                        color = colorText,
-                        style = MaterialTheme.typography.subtitle2,
-                        modifier = Modifier.paddingFromBaseline(top = 20.dp)
-                    )
+                state.tabContent.forEachIndexed { index, tabContent ->
+                    val colorText = if (selectedTabIndex == index) {
+                        MaterialTheme.colors.primary
+                    } else {
+                        MaterialTheme.colors.onSurface.copy(alpha = 0.8f)
+                    }
+                    Tab(
+                        selected = selectedTabIndex == index,
+                        onClick = sendToStore(TabContentAction.UpdateSection(tabContent.section)),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(id = tabContent.section.titleResId),
+                            color = colorText,
+                            style = MaterialTheme.typography.subtitle2,
+                            modifier = Modifier.paddingFromBaseline(top = 20.dp)
+                        )
+                    }
                 }
             }
-        }
-        Divider(
-            color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f)
-        )
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .supportWideScreen()
-        ) {
-            // display the current tab content which is a @Composable () -> Unit
-            tabContent[selectedTabIndex].content()
+            Divider(
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f)
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .supportWideScreen()
+            ) {
+                // display the current tab content which is a @Composable () -> Unit
+                state.tabContent[selectedTabIndex].content()
+            }
         }
     }
+
 }
 
 /**
