@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import arrow.optics.optics
 import com.example.jetnews.R
 import com.example.jetnews.data.Result
 import com.example.jetnews.data.interests.InterestsRepository
@@ -67,6 +68,7 @@ import com.example.jetnews.data.interests.impl.FakeInterestsRepository
 import com.example.jetnews.framework.Reducer
 import com.example.jetnews.framework.Store
 import com.example.jetnews.framework.StoreView
+import com.example.jetnews.framework.forEach
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.theme.JetnewsTheme
 import com.example.jetnews.utils.produceUiState
@@ -76,6 +78,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.util.*
 
 enum class Sections(@StringRes val titleResId: Int) {
     Topics(R.string.interests_section_topics),
@@ -300,6 +303,84 @@ private fun TabContent(
 
 }
 
+@optics
+data class SectionState(
+    val title:String,
+    val topics:Map<String, TopicItemState>
+){
+    companion object
+}
+
+@optics
+data class TopicListState(
+    val sections: Map<String, SectionState>
+){
+    companion object
+}
+
+@optics
+sealed class SectionItemAction{
+    companion object
+    @optics data class TopicItemActions(val action:Pair<String, TopicItemAction>):SectionItemAction(){
+        companion object
+    }
+
+    object None:SectionItemAction()
+}
+
+@optics
+sealed class TopicListAction{
+    companion object
+
+    @optics data class SectionItemActions(val action:Pair<String, SectionItemAction>):TopicListAction(){
+        companion object
+    }
+
+}
+
+class TopicListEnvironment(
+    val onTopicSelect: (TopicSelection) -> Flow<Unit>
+)
+
+val TopicItemReducer:Reducer<TopicItemState, TopicItemAction, TopicItemEnvironment> = {
+        state, action, environment, scope ->
+    when(action){
+        TopicItemAction.None -> state to emptyFlow()
+        is TopicItemAction.Toggle -> state to environment.onToggle(state.title).map { TopicItemAction.None }
+    }
+}
+
+val SectionItemReducer:Reducer<SectionState, SectionItemAction, TopicListEnvironment> =
+    com.example.jetnews.framework.combine(
+        TopicItemReducer.forEach(
+            states = SectionState.topics,
+            actionMapper = SectionItemAction.topicItemActions.action,
+            environmentMapper =  { env -> TopicItemEnvironment(
+                onToggle = { flowOf(Unit) }
+            ) }
+        ),
+        {
+            state, action, env, scope ->
+            when(action){
+                is SectionItemAction.TopicItemActions -> when(action.action.second){
+                    is TopicItemAction.Toggle -> state to env
+                        .onTopicSelect(TopicSelection(section = state.title, topic = action.action.first))
+                        .map { SectionItemAction.None }
+                    else -> state to emptyFlow()
+                }
+                SectionItemAction.None -> state to emptyFlow()
+            }
+
+        }
+    )
+
+val TopicListReducer:Reducer<TopicListState, TopicListAction, TopicListEnvironment> = SectionItemReducer.forEach(
+    states = TopicListState.sections,
+    actionMapper = TopicListAction.sectionItemActions.action,
+    environmentMapper = { it }
+)
+
+
 /**
  * Display the list for the topic tab
  *
@@ -313,7 +394,69 @@ private fun TopicList(
     selectedTopics: Set<TopicSelection>,
     onTopicSelect: (TopicSelection) -> Unit
 ) {
-    TabWithSections(topics, selectedTopics, onTopicSelect)
+
+    val isTopicSelected:(String, String) -> Boolean = {section, topic -> selectedTopics.contains(TopicSelection(section, topic)) }
+
+    val sectionData = topics.map { (section, topicStrings) -> section to SectionState(
+        title = section,
+        topics = topicStrings.map { topicName -> topicName to TopicItemState(
+            title = topicName,
+            selected = isTopicSelected(section, topicName)
+        ) }.toMap()
+    ) }.toMap()
+
+    val topicListState = TopicListState(sections = sectionData)
+
+
+    val store = Store.of(
+        state = topicListState,
+        reducer = TopicListReducer,
+        environment = TopicListEnvironment(
+            onTopicSelect = { topicSelection ->
+                flow {
+                    onTopicSelect(topicSelection)
+                    emit(Unit)
+                }
+            }
+        )
+    )
+
+    StoreView(store) { state ->
+        LazyColumn(Modifier.navigationBarsPadding()) {
+
+            store.forStatesLazy<SectionState, SectionItemAction, String>(
+                appState = state,
+                states = { it.sections },
+                actionMapper = {id, action -> TopicListAction.SectionItemActions(id to action)}
+            ){ childStore ->
+
+                item {
+                    StoreView(store = childStore) { childState ->
+                        Text(
+                            text = childState.title,
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .semantics { heading() },
+                            style = MaterialTheme.typography.subtitle1
+                        )
+                        Column {
+                            childStore.forStates<TopicItemState, TopicItemAction, String>(
+                                appState = childState,
+                                states = { it.topics },
+                                actionMapper = {id, action -> SectionItemAction.TopicItemActions(id to action)}
+                            )
+                            { topicStore ->
+                                TopicItem(topicStore)
+                                TopicDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
 }
 
 /**
@@ -370,7 +513,7 @@ private fun TabWithTopics(
             val store = Store.of(
                 state = TopicItemState(
                     title = topic,
-                    selected = selectedTopics.contains(topic)
+                    selected = selectedTopics.contains(topic),
                 ),
                 reducer = TopicItemReducer,
                 environment = TopicItemEnvironment(
@@ -388,49 +531,14 @@ private fun TabWithTopics(
     }
 }
 
-/**
- * Display a sectioned list of topics
- *
- * @param sections (state) topics to display, grouped by sections
- * @param selectedTopics (state) currently selected topics
- * @param onTopicSelect (event) request a topic+section selection be changed
- */
-@Composable
-private fun TabWithSections(
-    sections: TopicsMap,
-    selectedTopics: Set<TopicSelection>,
-    onTopicSelect: (TopicSelection) -> Unit
-) {
-    LazyColumn(Modifier.navigationBarsPadding()) {
-        sections.forEach { (section, topics) ->
-            item {
-                Text(
-                    text = section,
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .semantics { heading() },
-                    style = MaterialTheme.typography.subtitle1
-                )
-            }
-            items(topics) { topic ->
-                val store = Store.of(
-                    state = TopicItemState(title = topic, selected = selectedTopics.contains(TopicSelection(section, topic))),
-                    reducer = TopicItemReducer,
-                    environment = TopicItemEnvironment(
-                        onToggle = { title ->
-                            flow {
-                                onTopicSelect(TopicSelection(section, title))
-                                emit(Unit)
-                            }
-                        }
-                    )
-                )
-                TopicItem(store)
-                TopicDivider()
-            }
-        }
-    }
+@optics
+data class SectionTopicState(
+    val section:String,
+    val topics: Map<String, TopicItemState>
+){
+    companion object
 }
+
 
 data class TopicItemState(
     val title:String,
@@ -446,13 +554,7 @@ sealed class TopicItemAction{
     object None:TopicItemAction()
 }
 
-val TopicItemReducer:Reducer<TopicItemState, TopicItemAction, TopicItemEnvironment> = {
-    state, action, environment, scope ->
-    when(action){
-        TopicItemAction.None -> state to emptyFlow()
-        is TopicItemAction.Toggle -> state to environment.onToggle(state.title).map { TopicItemAction.None }
-    }
-}
+
 
 /**
  * Display a full-width topic item
