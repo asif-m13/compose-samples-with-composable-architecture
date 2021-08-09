@@ -47,6 +47,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import arrow.core.andThen
+import arrow.optics.Optional
+import arrow.optics.optics
 import com.example.jetnews.R
 import com.example.jetnews.data.Result
 import com.example.jetnews.data.posts.PostsRepository
@@ -54,6 +57,7 @@ import com.example.jetnews.data.posts.impl.BlockingFakePostsRepository
 import com.example.jetnews.framework.Reducer
 import com.example.jetnews.framework.Store
 import com.example.jetnews.framework.StoreView
+import com.example.jetnews.framework.forEach
 import com.example.jetnews.model.Post
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.state.UiState
@@ -407,18 +411,102 @@ private fun PostListSimpleSection(
     favorites: Set<String>,
     onToggleFavorite: (String) -> Unit
 ) {
-    Column {
-        posts.forEach { post ->
-            PostCardSimple(
+
+    val postListSimpleSectionState = PostListSimpleSectionState(
+        posts = posts.map { post ->
+            post.id to PostCardSimpleState(
                 post = post,
-                navigateToArticle = navigateToArticle,
-                isFavorite = favorites.contains(post.id),
-                onToggleFavorite = { onToggleFavorite(post.id) }
+                isFavorite = favorites.contains(post.id)
             )
-            PostListDivider()
+        }.toMap()
+    )
+
+
+    val store = Store.of(
+        state = postListSimpleSectionState,
+        reducer = PostCardSimpleReducer.forEach(
+            states = PostListSimpleSectionState.posts,
+            actionMapper = PostListSimpleSectionAction.postCardSimpleActions.value,
+            environmentMapper = { PostCardSimpleEnvironment(
+                navigateToArticle = it.navigateToArticle,
+                onToggleFavorite = it.toggleFavorite
+            ) }
+        ),
+        environment = PostListSimpleSectionEnvironment(
+            navigateToArticle = { id ->
+                flowOf(id).map { navigateToArticle(it) }
+            },
+            toggleFavorite = { id ->
+                flowOf(id).map { onToggleFavorite(it) }
+            }
+        )
+    )
+
+    StoreView(store) { state ->
+        Column {
+            store.forStates<PostCardSimpleState, PostCardSimpleAction, String>(
+                appState = state,
+                states = {it.posts},
+                actionMapper = {id, action-> PostListSimpleSectionAction.PostCardSimpleActions(id to action) }
+            ){ viewStore ->
+                PostCardSimple(viewStore)
+            }
         }
     }
+
 }
+
+@optics
+data class PostListSimpleSectionState(
+    val posts:Map<String, PostCardSimpleState>
+){
+    companion object
+}
+
+class PostListSimpleSectionEnvironment(
+    val navigateToArticle: (String) -> Flow<Unit>,
+    val toggleFavorite:(String) -> Flow<Unit>
+)
+
+@optics
+sealed class PostListSimpleSectionAction{
+    companion object {
+    }
+    @optics
+    data class PostCardSimpleActions(val value:Pair<String, PostCardSimpleAction>):PostListSimpleSectionAction(){
+        companion object
+    }
+}
+
+@optics
+data class PostListPopularSectionState(
+    val posts:Map<String, PostCardPopularState>
+){
+    companion object
+}
+
+@optics
+sealed class PostListPopularSectionAction{
+    companion object
+    @optics data class PostCardPopularActions(val value:Pair<String, PostCardPopularAction>):PostListPopularSectionAction(){
+        companion object
+    }
+}
+
+class PostListPopularSectionEnvironment(
+    val navigateToArticle: (String) -> Flow<Unit>
+)
+
+val PostListPopularSectionReducer: Reducer<PostListPopularSectionState, PostListPopularSectionAction, PostListPopularSectionEnvironment> =
+    PostCardPopularReducer.forEach(
+        states = PostListPopularSectionState.posts,
+        actionMapper = PostListPopularSectionAction.postCardPopularActions.value,
+        environmentMapper = {
+            PostCardPopularEnvironment(
+                navigateToArticle = it.navigateToArticle
+            )
+        }
+    )
 
 /**
  * Horizontal scrolling cards for [PostList]
@@ -431,25 +519,77 @@ private fun PostListPopularSection(
     posts: List<Post>,
     navigateToArticle: (String) -> Unit
 ) {
-    Column {
-        Text(
-            modifier = Modifier.padding(16.dp),
-            text = stringResource(id = R.string.home_popular_section_title),
-            style = MaterialTheme.typography.subtitle1
-        )
 
-        LazyRow(modifier = Modifier.padding(end = 16.dp)) {
-            items(posts) { post ->
-                PostCardPopular(
-                    post,
-                    navigateToArticle,
-                    Modifier.padding(start = 16.dp, bottom = 16.dp)
-                )
+    val store = Store.of(
+        state = PostListPopularSectionState(
+            posts = posts.map { post -> post.id to PostCardPopularState(post) }.toMap(),
+        ),
+        reducer = PostListPopularSectionReducer,
+        environment = PostListPopularSectionEnvironment(
+            navigateToArticle = { id ->
+                flowOf(id).mapNotNull { navigateToArticle(it) }
             }
+        )
+    )
+
+    StoreView(store) { state ->
+        Column {
+            Text(
+                modifier = Modifier.padding(16.dp),
+                text = stringResource(id = R.string.home_popular_section_title),
+                style = MaterialTheme.typography.subtitle1
+            )
+
+            LazyRow(modifier = Modifier.padding(end = 16.dp)) {
+                items(posts) { post ->
+
+                    PostCardPopular(
+                        store.forView(
+                            appState = state,
+                            stateBuilder = { state.posts[post.id]!! },
+                            actionMapper = { PostListPopularSectionAction.PostCardPopularActions(post.id to it) }
+                        ),
+                        Modifier.padding(start = 16.dp, bottom = 16.dp)
+                    )
+                }
+            }
+            PostListDivider()
         }
-        PostListDivider()
+    }
+
+
+}
+
+@optics
+data class PostListHistorySectionState(
+    val posts:Map<String, PostCardHistoryState>
+){
+    companion object
+}
+
+@optics
+sealed class PostListHistorySectionAction{
+    companion object
+    @optics
+    data class PostCardHistoryActions(val value:Pair<String, PostCardHistoryAction>):PostListHistorySectionAction(){
+        companion object
     }
 }
+
+class PostListHistorySectionEnvironment(
+    val navigateToArticle:(String) -> Flow<Unit>
+)
+
+val PostListHistorySectionReducer:Reducer<PostListHistorySectionState, PostListHistorySectionAction, PostListHistorySectionEnvironment> =
+    PostCardHistoryReducer.forEach(
+        states = PostListHistorySectionState.posts,
+        actionMapper = PostListHistorySectionAction.postCardHistoryActions.value,
+        environmentMapper = {
+            PostCardHistoryEnvironment(
+                navigateToArticle = it.navigateToArticle
+            )
+        }
+    )
 
 /**
  * Full-width list items that display "based on your history" for [PostList]
@@ -462,10 +602,29 @@ private fun PostListHistorySection(
     posts: List<Post>,
     navigateToArticle: (String) -> Unit
 ) {
-    Column {
-        posts.forEach { post ->
-            PostCardHistory(post, navigateToArticle)
-            PostListDivider()
+    val store = Store.of<PostListHistorySectionState, PostListHistorySectionAction, PostListHistorySectionEnvironment>(
+        state = PostListHistorySectionState(
+            posts = posts.map { post -> post.id to PostCardHistoryState(post = post, openDialog = false) }.toMap(),
+        ),
+        reducer = PostListHistorySectionReducer,
+        environment = PostListHistorySectionEnvironment(
+            navigateToArticle = { id ->
+                flowOf(id).map { navigateToArticle(id) }
+            }
+        )
+    )
+
+    StoreView(store) { state ->
+        Column {
+
+            store.forStates<PostCardHistoryState, PostCardHistoryAction, String>(
+                appState = state,
+                states = { it.posts },
+                actionMapper = {id, action -> PostListHistorySectionAction.PostCardHistoryActions(id to action)}
+            ) { viewStore ->
+                PostCardHistory(viewStore)
+                PostListDivider()
+            }
         }
     }
 }

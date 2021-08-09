@@ -63,15 +63,16 @@ class Store<State,  Action> private constructor(
         appState: State,
         states:(State) -> Map<StateId, ViewState>,
         actionMapper: (StateId, ViewAction) -> Action,
-        content:(Store<ViewState, ViewAction>) -> Unit
+        content:@Composable (Store<ViewState, ViewAction>) -> Unit
     ) {
         val stateValues = states(appState)
         for ((id, viewState) in stateValues){
-            forView<ViewState, ViewAction>(
+            val store = forView<ViewState, ViewAction>(
                 appState = appState,
                 stateBuilder = { viewState },
                 actionMapper = { actionMapper(id, it) }
-            ).apply(content)
+            )
+            content(store)
         }
 
     }
