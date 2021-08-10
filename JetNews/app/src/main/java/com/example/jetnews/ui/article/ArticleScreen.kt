@@ -60,6 +60,8 @@ import com.example.jetnews.framework.StoreView
 import com.example.jetnews.model.Post
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.home.BookmarkButton
+import com.example.jetnews.ui.home.BottomBarAction
+import com.example.jetnews.ui.home.BottomBarState
 import com.example.jetnews.ui.theme.JetnewsTheme
 import com.example.jetnews.utils.produceUiState
 import com.example.jetnews.utils.supportWideScreen
@@ -108,43 +110,6 @@ fun ArticleScreen(
         }
     )
 }
-
-
-@optics
-data class ArticleScreenTopSectionState(val post: Post, val openDialog: Boolean) {
-    companion object
-}
-
-sealed class ArticleScreenTopSectionAction(){
-    object BackAction: ArticleScreenTopSectionAction()
-    object FontSizeAction: ArticleScreenTopSectionAction()
-    object OpenDialog: ArticleScreenTopSectionAction()
-    object CloseDialog: ArticleScreenTopSectionAction()
-    object None: ArticleScreenTopSectionAction()
-
-    companion object
-}
-
-class ArticleScreenTopSectionEnvironment(
-    val backAction: () ->  Flow<Unit>
-)
-
-val articleScreenTopSectionReducer: Reducer<ArticleScreenTopSectionState, ArticleScreenTopSectionAction, ArticleScreenTopSectionEnvironment> = {
-    state, action, env, _ ->
-    when(action){
-        ArticleScreenTopSectionAction.BackAction -> { state to env.backAction().map { ArticleScreenTopSectionAction.None }.flowOn(Dispatchers.Main) }
-        ArticleScreenTopSectionAction.FontSizeAction -> state to emptyFlow()
-        ArticleScreenTopSectionAction.OpenDialog -> state.copy(openDialog = true) to emptyFlow()
-        ArticleScreenTopSectionAction.CloseDialog -> state.copy(openDialog = false) to emptyFlow()
-        ArticleScreenTopSectionAction.None -> state to emptyFlow()
-    }
-}
-
-
-
-
-
-
 
 
 /**
@@ -222,55 +187,7 @@ fun ArticleScreen(
 }
 
 
-@optics
-data class BottomBarState(
-    val liked: Boolean,
-    val bookmarked: Boolean,
-    val post: Post
-) {
-    companion object
-}
 
-@optics
-sealed class BottomBarAction {
-    object ActionLike : BottomBarAction()
-    object ActionBookmark : BottomBarAction()
-    data class ActionShare(val post: Post) : BottomBarAction()
-    object UnImplementedAction : BottomBarAction()
-    object None : BottomBarAction()
-
-    companion object
-}
-
-class BottomBarEnvironment(
-    val toggleLike: () -> Flow<Unit>,
-    val toggleBookmark: () -> Flow<Unit>,
-    val share: (post: Post) -> Flow<Unit>
-)
-
-
-val BottomBarReducer: Reducer<BottomBarState, BottomBarAction, BottomBarEnvironment> =
-    { state, action, env, _ ->
-        when (action) {
-            BottomBarAction.ActionBookmark -> {
-                state to env.toggleBookmark()
-                    .map { BottomBarAction.None }
-                    .flowOn(Dispatchers.IO)
-            }
-            BottomBarAction.ActionLike -> {
-                state to env.toggleLike()
-                    .map { BottomBarAction.None }
-                    .flowOn(Dispatchers.IO)
-            }
-            is BottomBarAction.ActionShare -> {
-                state to env.share(action.post)
-                    .map { BottomBarAction.None }
-                    .flowOn(Dispatchers.IO)
-            }
-            BottomBarAction.None -> state to emptyFlow()
-            BottomBarAction.UnImplementedAction -> state to emptyFlow()
-        }
-    }
 
 /**
  * Bottom bar for Article screen
