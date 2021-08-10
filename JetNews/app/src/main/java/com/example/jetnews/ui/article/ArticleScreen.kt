@@ -111,9 +111,37 @@ fun ArticleScreen(
 
 
 @optics
-class ArticleScreenTopSectionState(val post: Post, val isFavorite: Boolean) {
+data class ArticleScreenTopSectionState(val post: Post, val openDialog: Boolean) {
     companion object
 }
+
+sealed class ArticleScreenTopSectionAction(){
+    object BackAction: ArticleScreenTopSectionAction()
+    object FontSizeAction: ArticleScreenTopSectionAction()
+    object OpenDialog: ArticleScreenTopSectionAction()
+    object CloseDialog: ArticleScreenTopSectionAction()
+    object None: ArticleScreenTopSectionAction()
+
+    companion object
+}
+
+class ArticleScreenTopSectionEnvironment(
+    val backAction: () ->  Flow<Unit>
+)
+
+val articleScreenTopSectionReducer: Reducer<ArticleScreenTopSectionState, ArticleScreenTopSectionAction, ArticleScreenTopSectionEnvironment> = {
+    state, action, env, _ ->
+    when(action){
+        ArticleScreenTopSectionAction.BackAction -> { state to env.backAction().map { ArticleScreenTopSectionAction.None }.flowOn(Dispatchers.Main) }
+        ArticleScreenTopSectionAction.FontSizeAction -> state to emptyFlow()
+        ArticleScreenTopSectionAction.OpenDialog -> state.copy(openDialog = true) to emptyFlow()
+        ArticleScreenTopSectionAction.CloseDialog -> state.copy(openDialog = false) to emptyFlow()
+        ArticleScreenTopSectionAction.None -> state to emptyFlow()
+    }
+}
+
+
+
 
 
 
@@ -175,9 +203,9 @@ fun ArticleScreen(
             )
         },
         bottomBar = {
-            BottomBar(
-
-            )
+//            BottomBar(
+//
+//            )
         }
     ) { innerPadding ->
         PostContent(
@@ -240,6 +268,7 @@ val BottomBarReducer: Reducer<BottomBarState, BottomBarAction, BottomBarEnvironm
                     .flowOn(Dispatchers.IO)
             }
             BottomBarAction.None -> state to emptyFlow()
+            BottomBarAction.UnImplementedAction -> state to emptyFlow()
         }
     }
 
