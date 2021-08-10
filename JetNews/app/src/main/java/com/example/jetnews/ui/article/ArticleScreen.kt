@@ -19,11 +19,7 @@ package com.example.jetnews.ui.article
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration.UI_MODE_NIGHT_YES
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.AlertDialog
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
@@ -52,11 +48,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import arrow.optics.optics
 import com.example.jetnews.R
 import com.example.jetnews.data.Result
 import com.example.jetnews.data.posts.PostsRepository
 import com.example.jetnews.data.posts.impl.BlockingFakePostsRepository
 import com.example.jetnews.data.posts.impl.post3
+import com.example.jetnews.framework.Reducer
+import com.example.jetnews.framework.Store
+import com.example.jetnews.framework.StoreView
 import com.example.jetnews.model.Post
 import com.example.jetnews.ui.components.InsetAwareTopAppBar
 import com.example.jetnews.ui.home.BookmarkButton
@@ -64,6 +64,8 @@ import com.example.jetnews.ui.theme.JetnewsTheme
 import com.example.jetnews.utils.produceUiState
 import com.example.jetnews.utils.supportWideScreen
 import com.google.accompanist.insets.navigationBarsPadding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -107,6 +109,16 @@ fun ArticleScreen(
     )
 }
 
+
+@optics
+class ArticleScreenTopSectionState(val post: Post, val isFavorite: Boolean) {
+    companion object
+}
+
+
+
+
+
 /**
  * Stateless Article Screen that displays a single post.
  *
@@ -132,11 +144,25 @@ fun ArticleScreen(
         topBar = {
             InsetAwareTopAppBar(
                 title = {
-                    Text(
-                        text = stringResource(id = R.string.article_published_in, formatArgs = arrayOf(post.publication?.name.orEmpty())),
-                        style = MaterialTheme.typography.subtitle2,
-                        color = LocalContentColor.current
-                    )
+                    Row(horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            text = stringResource(
+                                id = R.string.article_published_in,
+                                formatArgs = arrayOf(post.publication?.name.orEmpty())
+                            ),
+                            style = MaterialTheme.typography.subtitle2,
+                            color = LocalContentColor.current
+                        )
+
+                        IconButton(onClick = {
+                            //todo
+                        }) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_text_settings),
+                                contentDescription = stringResource(R.string.cd_text_settings)
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -150,10 +176,7 @@ fun ArticleScreen(
         },
         bottomBar = {
             BottomBar(
-                post = post,
-                onUnimplementedAction = { showDialog = true },
-                isFavorite = isFavorite,
-                onToggleFavorite = onToggleFavorite
+
             )
         }
     ) { innerPadding ->
@@ -170,6 +193,56 @@ fun ArticleScreen(
     }
 }
 
+
+@optics
+data class BottomBarState(
+    val liked: Boolean,
+    val bookmarked: Boolean,
+    val post: Post
+) {
+    companion object
+}
+
+@optics
+sealed class BottomBarAction {
+    object ActionLike : BottomBarAction()
+    object ActionBookmark : BottomBarAction()
+    data class ActionShare(val post: Post) : BottomBarAction()
+    object UnImplementedAction : BottomBarAction()
+    object None : BottomBarAction()
+
+    companion object
+}
+
+class BottomBarEnvironment(
+    val toggleLike: () -> Flow<Unit>,
+    val toggleBookmark: () -> Flow<Unit>,
+    val share: (post: Post) -> Flow<Unit>
+)
+
+
+val BottomBarReducer: Reducer<BottomBarState, BottomBarAction, BottomBarEnvironment> =
+    { state, action, env, _ ->
+        when (action) {
+            BottomBarAction.ActionBookmark -> {
+                state to env.toggleBookmark()
+                    .map { BottomBarAction.None }
+                    .flowOn(Dispatchers.IO)
+            }
+            BottomBarAction.ActionLike -> {
+                state to env.toggleLike()
+                    .map { BottomBarAction.None }
+                    .flowOn(Dispatchers.IO)
+            }
+            is BottomBarAction.ActionShare -> {
+                state to env.share(action.post)
+                    .map { BottomBarAction.None }
+                    .flowOn(Dispatchers.IO)
+            }
+            BottomBarAction.None -> state to emptyFlow()
+        }
+    }
+
 /**
  * Bottom bar for Article screen
  *
@@ -180,42 +253,44 @@ fun ArticleScreen(
  */
 @Composable
 private fun BottomBar(
-    post: Post,
-    onUnimplementedAction: () -> Unit,
-    isFavorite: Boolean,
-    onToggleFavorite: () -> Unit
+    /* post: Post,
+     onUnimplementedAction: () -> Unit,
+     isFavorite: Boolean,
+     onToggleFavorite: () -> Unit*/
+    store: Store<BottomBarState, BottomBarAction>
 ) {
-    Surface(elevation = 8.dp) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .navigationBarsPadding()
-                .height(56.dp)
-                .fillMaxWidth()
-        ) {
-            IconButton(onClick = onUnimplementedAction) {
-                Icon(
-                    imageVector = Icons.Filled.ThumbUpOffAlt,
-                    contentDescription = stringResource(R.string.cd_add_to_favorites)
+    StoreView(store) { state ->
+        Surface(elevation = 8.dp) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .height(56.dp)
+                    .fillMaxWidth()
+            ) {
+                IconButton(onClick = {
+                    sendToStore(BottomBarAction.UnImplementedAction)()
+                }) {
+                    Icon(
+                        imageVector = Icons.Filled.ThumbUpOffAlt,
+                        contentDescription = stringResource(R.string.cd_add_to_favorites)
+                    )
+                }
+                BookmarkButton(
+                    isBookmarked = state.bookmarked,
+                    onClick = {
+                        sendToStore(BottomBarAction.ActionBookmark)()
+                    }
                 )
-            }
-            BookmarkButton(
-                isBookmarked = isFavorite,
-                onClick = onToggleFavorite
-            )
-            val context = LocalContext.current
-            IconButton(onClick = { sharePost(post, context) }) {
-                Icon(
-                    imageVector = Icons.Filled.Share,
-                    contentDescription = stringResource(R.string.cd_share)
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = onUnimplementedAction) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_text_settings),
-                    contentDescription = stringResource(R.string.cd_text_settings)
-                )
+                val context = LocalContext.current
+                IconButton(onClick = { sharePost(state.post, context) }) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = stringResource(R.string.cd_share)
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+
             }
         }
     }
@@ -256,7 +331,12 @@ private fun sharePost(post: Post, context: Context) {
         putExtra(Intent.EXTRA_TITLE, post.title)
         putExtra(Intent.EXTRA_TEXT, post.url)
     }
-    context.startActivity(Intent.createChooser(intent, context.getString(R.string.article_share_post)))
+    context.startActivity(
+        Intent.createChooser(
+            intent,
+            context.getString(R.string.article_share_post)
+        )
+    )
 }
 
 @Preview("Article screen")
